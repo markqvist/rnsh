@@ -20,40 +20,10 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+from ._version import __version__
+
 import os
 module_abs_filename = os.path.abspath(__file__)
 module_dir = os.path.dirname(module_abs_filename)
 
-def _get_version():
-    def pkg_res_version():
-        import pkg_resources
-        return pkg_resources.get_distribution("rnsh").version
-
-    def toml_version():
-        # Prefer stdlib tomllib (Python >= 3.11); fall back to tomli if available
-        try:
-            import tomllib as _toml
-        except Exception:
-            try:
-                import tomli as _toml
-            except Exception:
-                raise
-        with open(os.path.join(os.path.dirname(module_dir), "pyproject.toml"), "rb") as f:
-            return _toml.load(f)["tool"]["poetry"]["version"]
-
-    try:
-        if (os.path.isfile(os.path.join(os.path.dirname(module_dir), "pyproject.toml"))):
-            try:
-                return toml_version()
-            except:
-                return "0.0.0"
-        else:
-            try:
-                return pkg_res_version()
-            except:
-                return "0.0.0"
-                
-    except:
-        return "0.0.0"
-
-__version__ = _get_version()
+def _get_version(): return __version__
