@@ -13,7 +13,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 
 dependencies = [
-    "rns>=1.1.1"
+    "rns>=1.1.9"
 ]
 
 scripts = {rnsh = "rnsh.rnsh:rnsh_cli"}
