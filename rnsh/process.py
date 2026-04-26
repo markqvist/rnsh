@@ -580,15 +580,26 @@ class CallbackSubprocess:
                 with contextlib.suppress(Exception):
                     os.killpg(self._pid, signal.SIGINT)
                 os.kill(self._pid, signal.SIGINT)
+
+            #####################################################################
+            # It seems this was added to ensure some kind of test compatibility,
+            # but in reality it completely breaks Ctrl-C handling in interactive
+            # shell sessions, since it ensures that the underlying process is
+            # always terminated, leading to the session ending as well. Disabled
+            # but left here for reference.
+            #
             # Aggressively ensure quick termination expected by tests
-            def _escalate():
-                if self.running:
-                    with exception.permit(SystemExit):
-                        with contextlib.suppress(Exception):
-                            os.killpg(self._pid, signal.SIGHUP)
-                        os.kill(self._pid, signal.SIGTERM)
-            if not self._loop.is_closed():
-                self._loop.call_later(0.05, _escalate)
+            # def _escalate():
+            #     if self.running:
+            #         with exception.permit(SystemExit):
+            #             with contextlib.suppress(Exception):
+            #                 os.killpg(self._pid, signal.SIGHUP)
+            #             os.kill(self._pid, signal.SIGTERM)
+            # if not self._loop.is_closed():
+            #     self._loop.call_later(0.05, _escalate)
+            #
+            #####################################################################
+
         # When stdin is a TTY and stdout is a pipe, simulate canonical delivery of the buffered line upon CTRL-D
         if (not self._stdin_is_pipe) and self._stdout_is_pipe:
             for b in data:
