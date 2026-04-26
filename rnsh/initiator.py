@@ -211,7 +211,7 @@ async def _initiate_link(configdir, identitypath=None, verbosity=0, quietness=0,
     log.debug("Have link")
     if not noid and not _link.did_identify:
         # Delay a tiny bit to allow listener to fully enter WAIT_IDENT state
-        await asyncio.sleep(_link.rtt * 1.1 + 0.05)
+        await asyncio.sleep(min(1, _link.rtt * 1.1 + 0.05))
         _link.identify(_identity)
         _link.did_identify = True
 
