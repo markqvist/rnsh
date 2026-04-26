@@ -1,7 +1,6 @@
 from __future__ import annotations
 import contextlib
 import functools
-import threading
 import rnsh.exception as exception
 import asyncio
 import rnsh.process as process
@@ -15,21 +14,16 @@ import os
 import bz2
 import RNS
 
-import logging as __logging
-
-module_logger = __logging.getLogger(__name__)
-
 _TLink = TypeVar("_TLink")
+_TIdentity = TypeVar("_TIdentity")
 
 class SEType(enum.IntEnum):
     SE_LINK_CLOSED = 0
-
 
 class SessionException(Exception):
     def __init__(self, setype: SEType, msg: str, *args):
         super().__init__(msg, args)
         self.type = setype
-
 
 class LSState(enum.IntEnum):
     LSSTATE_WAIT_IDENT = 1
@@ -40,30 +34,22 @@ class LSState(enum.IntEnum):
     LSSTATE_TEARDOWN   = 6
 
 
-_TIdentity = TypeVar("_TIdentity")
-
-
 class LSOutletBase(ABC):
     @abstractmethod
-    def set_initiator_identified_callback(self, cb: Callable[[LSOutletBase, _TIdentity], None]):
-        raise NotImplemented()
+    def set_initiator_identified_callback(self, cb: Callable[[LSOutletBase, _TIdentity], None]): raise NotImplemented()
 
     @abstractmethod
-    def set_link_closed_callback(self, cb: Callable[[LSOutletBase], None]):
-        raise NotImplemented()
+    def set_link_closed_callback(self, cb: Callable[[LSOutletBase], None]): raise NotImplemented()
 
     @abstractmethod
-    def unset_link_closed_callback(self):
-        raise NotImplemented()
+    def unset_link_closed_callback(self): raise NotImplemented()
 
     @property
     @abstractmethod
-    def rtt(self):
-        raise NotImplemented()
+    def rtt(self): raise NotImplemented()
 
     @abstractmethod
-    def teardown(self):
-        raise NotImplemented()
+    def teardown(self): raise NotImplemented()
 
 
 class ListenerSession:
@@ -76,8 +62,7 @@ class ListenerSession:
     remote_cmd_as_args = False
 
     def __init__(self, outlet: LSOutletBase, channel: RNS.Channel.Channel, loop: asyncio.AbstractEventLoop):
-        self._log = module_logger.getChild(self.__class__.__name__)
-        self._log.info(f"Session started for {outlet}")
+        RNS.log(f"Session started for {outlet}", RNS.LOG_INFO)
         self.outlet = outlet
         self.channel = channel
         self.outlet.set_initiator_identified_callback(self._initiator_identified)
@@ -102,10 +87,10 @@ class ListenerSession:
         self.return_code: int | None = None
         self.return_code_sent = False
         self.process: process.CallbackSubprocess | None = None
-        if self.allow_all:
-            self._set_state(LSState.LSSTATE_WAIT_VERS)
-        else:
-            self._set_state(LSState.LSSTATE_WAIT_IDENT)
+
+        if self.allow_all: self._set_state(LSState.LSSTATE_WAIT_VERS)
+        else: self._set_state(LSState.LSSTATE_WAIT_IDENT)
+
         self.sessions.append(self)
         protocol.register_message_types(self.channel)
         self.channel.add_message_handler(self._handle_message)
@@ -115,7 +100,7 @@ class ListenerSession:
 
     def _set_state(self, state: LSState, timeout_factor: float = 10.0):
         timeout = max(self.outlet.rtt * timeout_factor, max(self.outlet.rtt * 2, 10)) if timeout_factor is not None else None
-        self._log.debug(f"Set state: {state.name}, timeout {timeout}")
+        RNS.log(f"Set state: {state.name}, timeout {timeout}", RNS.LOG_DEBUG)
         orig_state = self.state
         self.state = state
         if timeout_factor is not None:
@@ -123,11 +108,9 @@ class ListenerSession:
 
     def _call(self, func: callable, delay: float = 0):
         def call_inner():
-            # self._log.debug("call_inner")
-            if delay == 0:
-                func()
-            else:
-                self.loop.call_later(delay, func)
+            if delay == 0: func()
+            else: self.loop.call_later(delay, func)
+        
         self.loop.call_soon_threadsafe(call_inner)
 
     def send(self, message: RNS.MessageBase):
@@ -141,17 +124,18 @@ class ListenerSession:
 
     def terminate(self, error: str = None):
         with contextlib.suppress(Exception):
-            self._log.debug("Terminating session" + (f": {error}" if error else ""))
+            RNS.log("Terminating session" + (f": {error}" if error else ""), RNS.LOG_DEBUG)
             if error and self.state != LSState.LSSTATE_TEARDOWN:
                 with contextlib.suppress(Exception):
                     self.send(protocol.ErrorMessage(error, True))
+
             self.state = LSState.LSSTATE_ERROR
             self._terminate_process()
             self._call(self._prune, max(self.outlet.rtt * 3, process.CallbackSubprocess.PROCESS_PIPE_TIME+5))
 
     def _prune(self):
         self.state = LSState.LSSTATE_TEARDOWN
-        self._log.debug("Pruning session")
+        RNS.log("Pruning session", RNS.LOG_DEBUG)
         with contextlib.suppress(ValueError):
             self.sessions.remove(self)
         with contextlib.suppress(Exception):
@@ -159,29 +143,26 @@ class ListenerSession:
 
     def _check_protocol_timeout(self, fail_condition: Callable[[], bool], name: str):
         timeout = True
-        try:
-            timeout = self.state != LSState.LSSTATE_TEARDOWN and fail_condition()
-        except Exception as ex:
-                self._log.exception("Error in protocol timeout", ex)
-        if timeout:
-            self._protocol_timeout_error(name)
+        try: timeout = self.state != LSState.LSSTATE_TEARDOWN and fail_condition()
+        except Exception as e: RNS.log(f"Error in protocol timeout: {e}", RNS.LOG_ERROR)
+        if timeout: self._protocol_timeout_error(name)
 
     def _link_closed(self, outlet: LSOutletBase):
         outlet.unset_link_closed_callback()
 
         if outlet != self.outlet:
-            self._log.debug("Link closed received from incorrect outlet")
+            RNS.log("Link closed received from incorrect outlet", RNS.LOG_DEBUG)
             return
 
-        self._log.debug(f"link_closed {outlet}")
+        RNS.log(f"link_closed {outlet}", RNS.LOG_DEBUG)
         self.terminate()
 
     def _initiator_identified(self, outlet, identity):
         if outlet != self.outlet:
-            self._log.debug("Identity received from incorrect outlet")
+            RNS.log("Identity received from incorrect outlet", RNS.LOG_DEBUG)
             return
 
-        self._log.info(f"initiator_identified {identity} on link {outlet}")
+        RNS.log(f"initiator_identified {identity} on link {outlet}", RNS.LOG_INFO)
         if self.state not in [LSState.LSSTATE_WAIT_IDENT, LSState.LSSTATE_WAIT_VERS]:
             self._protocol_error(LSState.LSSTATE_WAIT_IDENT.name)
 
@@ -274,8 +255,8 @@ class ListenerSession:
                                              lambda: self.state == LSState.LSSTATE_RUNNING, "CommandExitedMessage"),
                            max(self.outlet.rtt * 5, 10))
                 return False
-        except Exception as ex:
-            self._log.exception("Error during pump", ex)
+        
+        except Exception as e: RNS.log(f"Error during pump: {e}", RNS.LOG_ERROR)
         return False
 
     def _terminate_process(self):
@@ -323,8 +304,8 @@ class ListenerSession:
                                                       stderr_is_pipe=self.stderr_is_pipe)
             self.process.start()
             self._set_window_size(rows, cols, hpix, vpix)
-        except Exception as ex:
-            self._log.exception(f"Unable to start process for link {self.outlet}", ex)
+        except Exception as e:
+            RNS.log(f"Unable to start process for link {self.outlet}: {e}", RNS.LOG_ERROR)
             self.terminate("Unable to start process")
 
     def _set_window_size(self, rows: int, cols: int, hpix: int, vpix: int):
@@ -345,13 +326,13 @@ class ListenerSession:
         if self.state == LSState.LSSTATE_WAIT_IDENT:
             # Ignore any messages until the initiator has identified to avoid race conditions
             # between identity announcement and early protocol messages.
-            self._log.debug("Ignoring message while waiting for identification")
+            RNS.log("Ignoring message while waiting for identification", RNS.LOG_DEBUG)
             return
         if self.state == LSState.LSSTATE_WAIT_VERS:
             if not isinstance(message, protocol.VersionInfoMessage):
                 self._protocol_error(self.state.name)
                 return
-            self._log.info(f"version {message.sw_version}, protocol {message.protocol_version} on link {self.outlet}")
+            RNS.log(f"Version {message.sw_version}, protocol {message.protocol_version} on link {self.outlet}", RNS.LOG_VERBOSE)
             if message.protocol_version != protocol.PROTOCOL_VERSION:
                 self.terminate("Incompatible protocol")
                 return
@@ -361,7 +342,7 @@ class ListenerSession:
         elif self.state == LSState.LSSTATE_WAIT_CMD:
             if not isinstance(message, protocol.ExecuteCommandMesssage):
                 return self._protocol_error(self.state.name)
-            self._log.info(f"Execute command message on link {self.outlet}: {message.cmdline}")
+            RNS.log(f"Execute command message on link {self.outlet}: {message.cmdline}", RNS.LOG_VERBOSE)
             self._set_state(LSState.LSSTATE_RUNNING)
             self._start_cmd(message.cmdline, message.pipe_stdin, message.pipe_stdout, message.pipe_stderr,
                             message.tcflags, message.term, message.rows, message.cols, message.hpix, message.vpix)
@@ -371,7 +352,7 @@ class ListenerSession:
                 self._set_window_size(message.rows, message.cols, message.hpix, message.vpix)
             elif isinstance(message, protocol.StreamDataMessage):
                 if message.stream_id != protocol.StreamDataMessage.STREAM_ID_STDIN:
-                    self._log.error(f"Received stream data for invalid stream {message.stream_id} on link {self.outlet}")
+                    RNS.log(f"Received stream data for invalid stream {message.stream_id} on link {self.outlet}", RNS.LOG_ERROR)
                     return self._protocol_error(self.state.name)
                 self._received_stdin(message.data, message.eof)
                 return
@@ -380,7 +361,7 @@ class ListenerSession:
                 self.send(message)
                 return
         elif self.state in [LSState.LSSTATE_ERROR, LSState.LSSTATE_TEARDOWN]:
-            self._log.error(f"Received packet, but in state {self.state.name}")
+            RNS.log(f"Received packet, but in state {self.state.name}", RNS.LOG_ERROR)
             return
         else:
             self._protocol_error("unexpected message")

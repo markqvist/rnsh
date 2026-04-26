@@ -27,7 +27,6 @@ import copy
 import errno
 import fcntl
 import functools
-import logging as __logging
 import os
 import pty
 import select
@@ -39,10 +38,9 @@ import threading
 import tty
 import types
 import typing
+import RNS
 
 import rnsh.exception as exception
-
-module_logger = __logging.getLogger(__name__)
 
 CTRL_C = "\x03".encode("utf-8")
 CTRL_D = "\x04".encode("utf-8")
@@ -103,10 +101,9 @@ def tty_read(fd: int) -> bytes:
                     if data is not None and len(data) > 0:
                         result.extend(data)
         return result
-    except EOFError:
-        raise
-    except Exception as ex:
-        module_logger.error("tty_read error: {ex}")
+    
+    except EOFError: raise
+    except Exception as e: RNS.log(f"TTY read error: {e}", RNS.LOG_ERROR)
 
 
 def tty_read_poll(fd: int) -> bytes:
@@ -141,10 +138,9 @@ def tty_read_poll(fd: int) -> bytes:
                         return result
                     raise EOFError
                 raise
-    except EOFError:
-        raise
-    except Exception as ex:
-        module_logger.error(f"tty_read error: {ex}")
+    except EOFError: raise
+    except Exception as e: RNS.log(f"TTY read error: {e}", RNS.LOG_ERROR)
+    
     return result
 
 
@@ -234,13 +230,11 @@ class TTYRestorer(contextlib.AbstractContextManager):
 
         :param fd: file descriptor of tty
         """
-        self._log = module_logger.getChild(self.__class__.__name__)
         self._fd = fd
         self._tattr = None
         self._suppress_logs = suppress_logs
         self._tattr = self.current_attr()
-        if not self._tattr and not self._suppress_logs:
-            self._log.debug(f"Could not get attrs for fd {fd}")
+        if not self._tattr and not self._suppress_logs: RNS.log(f"Could not get attrs for fd {fd}", RNS.LOG_DEBUG)
 
     def raw(self):
         """
@@ -466,8 +460,6 @@ class CallbackSubprocess:
         assert stdout_callback is not None, "stdout_callback should not be None"
         assert terminated_callback is not None, "terminated_callback should not be None"
 
-        self._log = module_logger.getChild(self.__class__.__name__)
-        # self._log.debug(f"__init__({argv},{term},...")
         self._command: [str] = argv
         self._env = env or {}
         self._loop = loop
@@ -492,26 +484,22 @@ class CallbackSubprocess:
         stdout = self._child_stdout
         stderr = self._child_stderr
         fds = set(filter(lambda x: x is not None, list({stdin, stdout, stderr})))
-        self._log.debug(f"Queuing close of pipes for ended process (fds: {fds})")
+        RNS.log(f"Queuing close of pipes for ended process (fds: {fds})", RNS.LOG_DEBUG)
 
         def ensure_pipes_closed_inner():
-            self._log.debug(f"Ensuring pipes are closed (fds: {fds})")
+            RNS.log(f"Ensuring pipes are closed (fds: {fds})", RNS.LOG_DEBUG)
             for fd in fds:
-                self._log.debug(f"Closing fd {fd}")
-                with contextlib.suppress(OSError):
-                    tty_unset_reader_callbacks(fd)
-                with contextlib.suppress(OSError):
-                    os.close(fd)
+                RNS.log(f"Closing fd {fd}", RNS.LOG_DEBUG)
+                with contextlib.suppress(OSError): tty_unset_reader_callbacks(fd)
+                with contextlib.suppress(OSError): os.close(fd)
 
             self._child_stdin = None
             self._child_stdout = None
             self._child_stderr = None
 
         # Avoid scheduling on a closed loop
-        if self._loop.is_closed():
-            ensure_pipes_closed_inner()
-        else:
-            self._loop.call_later(CallbackSubprocess.PROCESS_PIPE_TIME, ensure_pipes_closed_inner)
+        if self._loop.is_closed(): ensure_pipes_closed_inner()
+        else:                      self._loop.call_later(CallbackSubprocess.PROCESS_PIPE_TIME, ensure_pipes_closed_inner)
 
     def terminate(self, kill_delay: float = 1.0):
         """
@@ -519,16 +507,14 @@ class CallbackSubprocess:
         :param kill_delay: if after kill_delay seconds the child process has not exited, escalate to SIGHUP and SIGKILL
         """
 
-        self._log.debug("terminate()")
-        if not self.running:
-            return
+        RNS.log("terminate()", RNS.LOG_EXTREME)
+        if not self.running: return
 
-        with exception.permit(SystemExit):
-            os.kill(self._pid, signal.SIGTERM)
+        with exception.permit(SystemExit): os.kill(self._pid, signal.SIGTERM)
 
         def kill():
             if process_exists(self._pid):
-                self._log.debug("kill()")
+                RNS.log("kill()", RNS.LOG_EXTREME)
                 with exception.permit(SystemExit):
                     os.kill(self._pid, signal.SIGHUP)
                     os.kill(self._pid, signal.SIGKILL)
@@ -536,11 +522,10 @@ class CallbackSubprocess:
         self._loop.call_later(kill_delay, kill)
 
         def wait():
-            self._log.debug("wait()")
-            with contextlib.suppress(OSError):
-                os.waitpid(self._pid, 0)
+            RNS.log("wait()", RNS.LOG_EXTREME)
+            with contextlib.suppress(OSError): os.waitpid(self._pid, 0)
             self._ensure_pipes_closed()
-            self._log.debug("wait() finish")
+            RNS.log("wait() finish", RNS.LOG_EXTREME)
 
         threading.Thread(target=wait, daemon=True).start()
 
@@ -669,7 +654,7 @@ class CallbackSubprocess:
         :param v: vertical pixels visible
         :return:
         """
-        self._log.debug(f"set_winsize({r},{c},{h},{v}")
+        RNS.log(f"set_winsize({r},{c},{h},{v}", RNS.LOG_DEBUG)
         tty_set_winsize(self._child_stdout, r, c, h, v)
 
     def copy_winsize(self, fromfd: int):
@@ -702,7 +687,7 @@ class CallbackSubprocess:
         """
         Start the child process.
         """
-        self._log.debug("start()")
+        RNS.log("start()", RNS.LOG_EXTREME)
 
         # # Using the parent environment seems to do some weird stuff, at least on macOS
         # parentenv = os.environ.copy()
@@ -730,16 +715,15 @@ class CallbackSubprocess:
             self._child_stdout, \
             self._child_stderr = _launch_child(self._command, env, self._stdin_is_pipe, self._stdout_is_pipe,
                                                self._stderr_is_pipe)
-        self._log.debug("Started pid %d, fds: %d, %d, %d", self.pid, self._child_stdin, self._child_stdout, self._child_stderr)
+        RNS.log(f"Started pid {self.pid}, fds: {self._child_stdin}, {self._child_stdout}, {self._child_stderr}", RNS.LOG_DEBUG)
 
         def poll():
-            # self.log.debug("poll")
             try:
                 pid, self._return_code = os.waitpid(self._pid, os.WNOHANG)
                 if self._return_code is not None:
                     self._return_code = self._return_code & 0xff
                 if self._return_code is not None and not process_exists(self._pid):
-                    self._log.debug(f"polled return code {self._return_code}")
+                    RNS.log(f"polled return code {self._return_code}", RNS.LOG_DEBUG)
                     self._terminated_cb(self._return_code)
                 if self.running:
                     self._loop.call_later(CallbackSubprocess.PROCESS_POLL_TIME, poll)
@@ -747,7 +731,7 @@ class CallbackSubprocess:
                     self._ensure_pipes_closed()
             except Exception as e:
                 if not hasattr(e, "errno") or e.errno != errno.ECHILD:
-                    self._log.debug(f"Error in process poll: {e}")
+                    RNS.log(f"Error in process poll: {e}", RNS.LOG_DEBUG)
 
         self._loop.call_later(CallbackSubprocess.PROCESS_POLL_TIME, poll)
 
@@ -806,7 +790,6 @@ async def main():
     python ./process.py /bin/zsh --login
     """
 
-    log = module_logger.getChild("main")
     if len(sys.argv) <= 1:
         print(f"Usage: {sys.argv} <absolute_path_to_child_executable> [child_arg ...]")
         exit(1)
@@ -815,14 +798,9 @@ async def main():
     # asyncio.set_event_loop(loop)
     retcode = loop.create_future()
 
-    def stdout(data: bytes):
-        # log.debug("stdout")
-        os.write(sys.stdout.fileno(), data)
-        # sys.stdout.flush()
+    def stdout(data: bytes): os.write(sys.stdout.fileno(), data)
 
-    def terminated(rc: int):
-        # log.debug(f"terminated {rc}")
-        retcode.set_result(rc)
+    def terminated(rc: int): retcode.set_result(rc)
 
     process = CallbackSubprocess(argv=sys.argv[1:],
                                  env={"TERM": os.environ.get("TERM", "xterm")},
@@ -831,14 +809,12 @@ async def main():
                                  terminated_callback=terminated)
 
     def sigint_handler(sig, frame):
-        # log.debug("KeyboardInterrupt")
         if process is None or process.started and not process.running:
             raise KeyboardInterrupt
         elif process.running:
             process.write("\x03".encode("utf-8"))
 
     def sigwinch_handler(sig, frame):
-        # log.debug("WindowChanged")
         process.copy_winsize(sys.stdin.fileno())
 
     signal.signal(signal.SIGINT, sigint_handler)
@@ -847,10 +823,9 @@ async def main():
     def stdin():
         try:
             data = tty_read(sys.stdin.fileno())
-            # log.debug(f"stdin {data}")
             if data is not None:
                 process.write(data)
-                # sys.stdout.buffer.write(data)
+
         except EOFError:
             tty_unset_reader_callbacks(sys.stdin.fileno())
             process.write(CTRL_D)
@@ -861,7 +836,7 @@ async def main():
     loop.call_later(0.001, functools.partial(process.copy_winsize, sys.stdin.fileno()))
 
     val = await retcode
-    log.debug(f"got retcode {val}")
+    RNS.log(f"Got return code {val}", RNS.LOG_DEBUG)
     return val
 
 

@@ -21,24 +21,19 @@
 # SOFTWARE.
 
 import asyncio
-import logging
 import threading
 import time
 import rnsh.exception as exception
-import logging as __logging
 from typing import Callable
 from contextlib import AbstractContextManager
 import types
 import typing
 
-module_logger = __logging.getLogger(__name__)
-
 
 class RetryStatus:
     def __init__(self, tag: any, try_limit: int, wait_delay: float, retry_callback: Callable[[any, int], any],
                  timeout_callback: Callable[[any, int], None], tries: int = 1):
-        self._log = module_logger.getChild(self.__class__.__name__)
-        self._log.setLevel(logging.INFO)
+        
         self.tag = tag
         self.try_limit = try_limit
         self.tries = tries
@@ -51,9 +46,9 @@ class RetryStatus:
     @property
     def ready(self):
         ready = time.time() > self.try_time + self.wait_delay
-        self._log.debug(f"ready check {self.tag} try_time {self.try_time} wait_delay {self.wait_delay} " +
+        RNS.log(f"ready check {self.tag} try_time {self.try_time} wait_delay {self.wait_delay} " +
                         f"next_try {self.try_time + self.wait_delay} now {time.time()} " +
-                        f"exceeded {time.time() - self.try_time - self.wait_delay} ready {ready}")
+                        f"exceeded {time.time() - self.try_time - self.wait_delay} ready {ready}", RNS.LOG_DEBUG)
         return ready
 
     @property
@@ -72,7 +67,6 @@ class RetryStatus:
 
 class RetryThread(AbstractContextManager):
     def __init__(self, loop_period: float = 0.25, name: str = "retry thread"):
-        self._log = module_logger.getChild(self.__class__.__name__)
         self._loop_period = loop_period
         self._statuses: list[RetryStatus] = []
         self._tag_counter = 0
@@ -86,7 +80,7 @@ class RetryThread(AbstractContextManager):
         return self._thread.is_alive()
 
     def close(self, loop: asyncio.AbstractEventLoop = None) -> asyncio.Future:
-        self._log.debug("stopping timer thread")
+        RNS.log("Stopping timer thread", RNS.LOG_DEBUG)
         if loop is None:
             self._run = False
             self._thread.join()
@@ -112,59 +106,61 @@ class RetryThread(AbstractContextManager):
             time.sleep(self._loop_period)
             ready: list[RetryStatus] = []
             prune: list[RetryStatus] = []
-            with self._lock:
-                ready.extend(list(filter(lambda s: s.ready, self._statuses)))
+            with self._lock: ready.extend(list(filter(lambda s: s.ready, self._statuses)))
+            
             for retry in ready:
                 try:
                     if not retry.completed:
                         if retry.timed_out:
-                            self._log.debug(f"timed out {retry.tag} after {retry.try_limit} tries")
+                            RNS.log(f"Timed out {retry.tag} after {retry.try_limit} tries", RNS.LOG_DEBUG)
                             retry.timeout()
                             prune.append(retry)
                         elif retry.ready:
-                            self._log.debug(f"retrying {retry.tag}, try {retry.tries + 1}/{retry.try_limit}")
+                            RNS.log(f"Retrying {retry.tag}, try {retry.tries + 1}/{retry.try_limit}", RNS.LOG_DEBUG)
                             should_continue = retry.retry()
-                            if not should_continue:
-                                self.complete(retry.tag)
+                            if not should_continue: self.complete(retry.tag)
+                
                 except Exception as e:
-                    self._log.error(f"error processing retry id {retry.tag}: {e}")
+                    RNS.log(f"Error processing retry id {retry.tag}: {e}", RNS.LOG_ERROR)
                     prune.append(retry)
 
             with self._lock:
                 for retry in prune:
-                    self._log.debug(f"pruned retry {retry.tag}, retry count {retry.tries}/{retry.try_limit}")
-                    with exception.permit(SystemExit):
-                        self._statuses.remove(retry)
-        if self._finished is not None:
-            self._finished.set_result(None)
+                    RNS.log(f"pruned retry {retry.tag}, retry count {retry.tries}/{retry.try_limit}", RNS.LOG_DEBUG)
+                    with exception.permit(SystemExit): self._statuses.remove(retry)
+
+        if self._finished is not None: self._finished.set_result(None)
 
     def _get_next_tag(self):
         self._tag_counter += 1
         return self._tag_counter
 
     def has_tag(self, tag: any) -> bool:
-        with self._lock:
-            return next(filter(lambda s: s.tag == tag, self._statuses), None) is not None
+        with self._lock: return next(filter(lambda s: s.tag == tag, self._statuses), None) is not None
 
     def begin(self, try_limit: int, wait_delay: float, try_callback: Callable[[any, int], any],
               timeout_callback: Callable[[any, int], None]) -> any:
-        self._log.debug(f"running first try")
+        
+        RNS.log(f"Running first try", RNS.LOG_DEBUG)
         tag = try_callback(None, 1)
-        self._log.debug(f"first try got id {tag}")
+        RNS.log(f"First try got id {tag}", RNS.LOG_DEBUG)
+        
         if not tag:
-            self._log.debug(f"callback returned None/False/0, considering complete.")
+            RNS.log(f"Callback returned None/False/0, considering complete.", RNS.LOG_DEBUG)
             return None
+        
         with self._lock:
-            if tag is None:
-                tag = self._get_next_tag()
+            if tag is None: tag = self._get_next_tag()
             self.complete(tag)
+
             self._statuses.append(RetryStatus(tag=tag,
                                               tries=1,
                                               try_limit=try_limit,
                                               wait_delay=wait_delay,
                                               retry_callback=try_callback,
                                               timeout_callback=timeout_callback))
-        self._log.debug(f"added retry timer for {tag}")
+        
+        RNS.log(f"Added retry timer for {tag}", RNS.LOG_DEBUG)
         return tag
 
     def complete(self, tag: any):
@@ -174,16 +170,17 @@ class RetryThread(AbstractContextManager):
             if status is not None:
                 status.completed = True
                 self._statuses.remove(status)
-                self._log.debug(f"completed {tag}")
+                RNS.log(f"completed {tag}", RNS.LOG_DEBUG)
                 return
 
-        self._log.debug(f"status not found to complete {tag}")
+        RNS.log(f"status not found to complete {tag}", RNS.LOG_DEBUG)
 
     def complete_all(self):
         with self._lock:
             for status in self._statuses:
                 status.completed = True
-                self._log.debug(f"completed {status.tag}")
+                RNS.log(f"completed {status.tag}", RNS.LOG_DEBUG)
+            
             self._statuses.clear()
 
     def __exit__(self, __exc_type: typing.Type[BaseException], __exc_value: BaseException,

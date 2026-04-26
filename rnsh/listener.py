@@ -25,10 +25,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import enum
-import functools
-import logging as __logging
 import os
 import queue
 import shlex
@@ -43,7 +39,6 @@ import RNS
 import rnsh.exception as exception
 import rnsh.process as process
 import rnsh.retry as retry
-import rnsh.rnslogging as rnslogging
 import rnsh.session as session
 import re
 import contextlib
@@ -52,13 +47,6 @@ import pwd
 import rnsh.protocol as protocol
 import rnsh.helpers as helpers
 import rnsh.rnsh
-
-module_logger = __logging.getLogger(__name__)
-
-
-def _get_logger(name: str):
-    global module_logger
-    return module_logger.getChild(name)
 
 
 _identity = None
@@ -83,16 +71,12 @@ async def _check_finished(timeout: float = 0):
 
 def _sigint_handler(sig, loop):
     global _finished
-    log = _get_logger("_sigint_handler")
-    log.debug(signal.Signals(sig).name)
-    if _finished is not None:
-        _finished.set()
-    else:
-        raise KeyboardInterrupt()
+    RNS.log(f"Signal: {signal.Signals(sig).name}", RNS.LOG_DEBUG)
+    if _finished is not None: _finished.set()
+    else: raise KeyboardInterrupt()
 
 def _reload_allowed_file():
     global _allowed_file, _allowed_file_identity_hashes
-    log = _get_logger("_listen")
     if _allowed_file != None:
         try:
             with open(_allowed_file, "r") as file:
@@ -108,62 +92,54 @@ def _reload_allowed_file():
                             _allowed_file_identity_hashes.append(destination_hash)
                             added += 1
                         except Exception:
-                            log.debug(f"Discarded invalid Identity hash in {_allowed_file} at line {line}")
+                            RNS.log(f"Discarded invalid Identity hash in {_allowed_file} at line {line}", RNS.LOG_DEBUG)
 
                 ms = "y" if added == 1 else "ies"
-                log.debug(f"Loaded {added} allowed identit{ms} from "+str(_allowed_file))
-        except Exception as e:
-            log.error(f"Error while reloading allowed indetities file: {e}")
+                RNS.log(f"Loaded {added} allowed identit{ms} from "+str(_allowed_file), RNS.LOG_DEBUG)
+        
+        except Exception as e: RNS.log(f"Error while reloading allowed indetities file: {e}", RNS.LOG_ERROR)
 
+def compute_target_rns_loglevel(verbosity: int, quietness: int, base_level: int = RNS.LOG_INFO) -> int:
+    try:
+        target = int(base_level) + int(verbosity) - int(quietness)
+        if target < RNS.LOG_CRITICAL: target = RNS.LOG_CRITICAL
+        if target > RNS.LOG_DEBUG:    target = RNS.LOG_DEBUG
+        return target
+    
+    except Exception: return base_level
 
 async def listen(configdir, command, identitypath=None, service_name=None, verbosity=0, quietness=0, allowed=None,
                  allowed_file=None, disable_auth=None, announce_period=900, no_remote_command=True, remote_cmd_as_args=False,
                  loop: asyncio.AbstractEventLoop = None):
     global _identity, _allow_all, _allowed_identity_hashes, _allowed_file, _allowed_file_identity_hashes
     global _reticulum, _cmd, _destination, _no_remote_command, _remote_cmd_as_args, _finished
-    log = _get_logger("_listen")
-    if not loop:
-        loop = asyncio.get_running_loop()
+
+    if not loop: loop = asyncio.get_running_loop()
     if service_name is None or len(service_name) == 0:
         service_name = "default"
 
-    log.info(f"Using service name {service_name}")
-
-    # Emit an immediate readiness hint before heavy initialization so tests can detect startup promptly
-    try:
-        print("rnsh listening...", flush=True)
-    except Exception:
-        pass
-
+    RNS.log(f"Using service name {service_name}", RNS.LOG_INFO)
 
     # More -v should increase verbosity (higher RNS.loglevel); -q should decrease it
-    targetloglevel = rnslogging.compute_target_rns_loglevel(verbosity, quietness, RNS.LOG_INFO)
+    targetloglevel = compute_target_rns_loglevel(verbosity, quietness, RNS.LOG_INFO)
     _reticulum = RNS.Reticulum(configdir=configdir, loglevel=targetloglevel)
-    rnslogging.RnsHandler.set_log_level_with_rns_level(targetloglevel)
     _identity = rnsh.rnsh.prepare_identity(identitypath, service_name)
     _destination = RNS.Destination(_identity, RNS.Destination.IN, RNS.Destination.SINGLE, rnsh.rnsh.APP_NAME)
-    # Log early to ensure visibility for readiness checks in tests
-    log.info("rnsh listening for commands on " + RNS.prettyhexrep(_destination.hash))
-    try:
-        # Also print directly to stdout with flush to guarantee capture by PTY/pipe
-        print("rnsh listening for commands on " + RNS.prettyhexrep(_destination.hash), flush=True)
-    except Exception:
-        pass
-
+    
+    RNS.log(f"rnsh listening for commands on {RNS.prettyhexrep(_destination.hash)}", RNS.LOG_NOTICE)
+    
     _cmd = command
     if _cmd is None or len(_cmd) == 0:
         shell = None
-        try:
-            shell = pwd.getpwuid(os.getuid()).pw_shell
-        except Exception as e:
-            log.error(f"Error looking up shell: {e}")
-        log.info(f"Using {shell} for default command.")
+        try: shell = pwd.getpwuid(os.getuid()).pw_shell
+        except Exception as e: RNS.log(f"Error looking up shell: {e}", RNS.LOG_ERROR)
+        RNS.log(f"Using {shell} for default command.", RNS.LOG_INFO)
+
         # Ensure a sane shell default. Fall back to /bin/sh if lookup fails.
-        if not shell or len(shell) == 0:
-            shell = "/bin/sh"
+        if not shell or len(shell) == 0: shell = "/bin/sh"
         _cmd = [shell]
-    else:
-        log.info(f"Using command {shlex.join(_cmd)}")
+    
+    else: RNS.log(f"Using command {shlex.join(_cmd)}", RNS.LOG_INFO)
 
     _no_remote_command = no_remote_command
     session.ListenerSession.allow_remote_command = not no_remote_command
@@ -198,12 +174,14 @@ async def listen(configdir, command, identitypath=None, service_name=None, verbo
                         session.ListenerSession.allowed_identity_hashes.append(destination_hash)
                     except Exception:
                         raise ValueError("Invalid destination entered. Check your input.")
+                
                 except Exception as e:
-                    log.error(str(e))
+                    RNS.log(f"Unhandled error: {e}", RNS.LOG_ERROR)
+                    RNS.trace_exception(e)
                     exit(1)
 
     if (len(_allowed_identity_hashes) < 1 and len(_allowed_file_identity_hashes) < 1) and not disable_auth:
-        log.warning("Warning: No allowed identities configured, rnsh will not accept any connections!")
+        RNS.log("Warning: No allowed identities configured, rnsh will not accept any connections!", RNS.LOG_WARNING)
 
     def link_established(lnk: RNS.Link):
         _reload_allowed_file()
@@ -214,15 +192,7 @@ async def listen(configdir, command, identitypath=None, service_name=None, verbo
     _finished = asyncio.Event()
     signal.signal(signal.SIGINT, _sigint_handler)
 
-    # Log again after full setup
-    log.info("rnsh listening for commands on " + RNS.prettyhexrep(_destination.hash))
-    try:
-        print("rnsh listening for commands on " + RNS.prettyhexrep(_destination.hash), flush=True)
-    except Exception:
-        pass
-
-    if announce_period is not None:
-        _destination.announce()
+    if announce_period is not None: _destination.announce()
 
     last_announce = time.time()
     sleeper = helpers.SleepRate(0.01)
@@ -239,7 +209,7 @@ async def listen(configdir, command, identitypath=None, service_name=None, verbo
             else:
                 await asyncio.sleep(0.25)
     finally:
-        log.warning("Shutting down")
+        RNS.log("Shutting down", RNS.LOG_NOTICE)
         await session.ListenerSession.terminate_all("Shutting down")
         await asyncio.sleep(1)
         links_still_active = list(filter(lambda l: l.status != RNS.Link.CLOSED, _destination.links))

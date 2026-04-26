@@ -1,13 +1,5 @@
 from __future__ import annotations
 
-import enum
-import queue
-import threading
-import time
-import typing
-import uuid
-from types import TracebackType
-from typing import Type, Callable, TypeVar, Tuple
 import RNS
 from RNS.vendor import umsgpack
 from RNS.Buffer import StreamDataMessage as RNSStreamDataMessage
@@ -15,14 +7,10 @@ import rnsh.retry
 import abc
 import contextlib
 import struct
-import logging as __logging
 from abc import ABC, abstractmethod
-
-module_logger = __logging.getLogger(__name__)
 
 MSG_MAGIC = 0xac
 PROTOCOL_VERSION = 1
-
 
 def _make_MSGTYPE(val: int):
     return ((MSG_MAGIC << 8) & 0xff00) | (val & 0x00ff)
@@ -30,12 +18,8 @@ def _make_MSGTYPE(val: int):
 
 class NoopMessage(RNS.MessageBase):
     MSGTYPE = _make_MSGTYPE(0)
-
-    def pack(self) -> bytes:
-        return bytes()
-
-    def unpack(self, raw):
-        pass
+    def pack(self) -> bytes: return bytes()
+    def unpack(self, raw): pass
 
 
 class WindowSizeMessage(RNS.MessageBase):
@@ -48,11 +32,8 @@ class WindowSizeMessage(RNS.MessageBase):
         self.hpix = hpix
         self.vpix = vpix
 
-    def pack(self) -> bytes:
-        return umsgpack.packb((self.rows, self.cols, self.hpix, self.vpix))
-
-    def unpack(self, raw):
-        self.rows, self.cols, self.hpix, self.vpix = umsgpack.unpackb(raw)
+    def pack(self) -> bytes: return umsgpack.packb((self.rows, self.cols, self.hpix, self.vpix))
+    def unpack(self, raw): self.rows, self.cols, self.hpix, self.vpix = umsgpack.unpackb(raw)
 
 
 class ExecuteCommandMesssage(RNS.MessageBase):
@@ -61,6 +42,7 @@ class ExecuteCommandMesssage(RNS.MessageBase):
     def __init__(self, cmdline: [str] = None, pipe_stdin: bool = False, pipe_stdout: bool = False,
                  pipe_stderr: bool = False, tcflags: [any] = None, term: str | None = None, rows: int = None,
                  cols: int = None, hpix: int = None, vpix: int = None):
+        
         super().__init__()
         self.cmdline = cmdline
         self.pipe_stdin = pipe_stdin
@@ -98,11 +80,8 @@ class VersionInfoMessage(RNS.MessageBase):
         self.sw_version = sw_version or rnsh.__version__
         self.protocol_version = PROTOCOL_VERSION
 
-    def pack(self) -> bytes:
-        return umsgpack.packb((self.sw_version, self.protocol_version))
-
-    def unpack(self, raw):
-        self.sw_version, self.protocol_version = umsgpack.unpackb(raw)
+    def pack(self) -> bytes: return umsgpack.packb((self.sw_version, self.protocol_version))
+    def unpack(self, raw): self.sw_version, self.protocol_version = umsgpack.unpackb(raw)
 
 
 class ErrorMessage(RNS.MessageBase):
@@ -114,11 +93,8 @@ class ErrorMessage(RNS.MessageBase):
         self.fatal = fatal
         self.data = data
 
-    def pack(self) -> bytes:
-        return umsgpack.packb((self.msg, self.fatal, self.data))
-
-    def unpack(self, raw: bytes):
-        self.msg, self.fatal, self.data = umsgpack.unpackb(raw)
+    def pack(self) -> bytes: return umsgpack.packb((self.msg, self.fatal, self.data))
+    def unpack(self, raw: bytes): self.msg, self.fatal, self.data = umsgpack.unpackb(raw)
 
 
 class CommandExitedMessage(RNS.MessageBase):
@@ -128,17 +104,12 @@ class CommandExitedMessage(RNS.MessageBase):
         super().__init__()
         self.return_code = return_code
 
-    def pack(self) -> bytes:
-        return umsgpack.packb(self.return_code)
-
-    def unpack(self, raw: bytes):
-        self.return_code = umsgpack.unpackb(raw)
+    def pack(self) -> bytes: return umsgpack.packb(self.return_code)
+    def unpack(self, raw: bytes): self.return_code = umsgpack.unpackb(raw)
 
 
 message_types = [NoopMessage, VersionInfoMessage, WindowSizeMessage, ExecuteCommandMesssage, StreamDataMessage,
                  CommandExitedMessage, ErrorMessage]
 
-
 def register_message_types(channel: RNS.Channel.Channel):
-    for message_type in message_types:
-        channel.register_message_type(message_type)
+    for message_type in message_types: channel.register_message_type(message_type)

@@ -26,53 +26,25 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import enum
-import functools
-import logging as __logging
-import os
-import queue
-import shlex
-import signal
-import sys
-import termios
-import threading
-import time
-import tty
-from typing import Callable, TypeVar
-import RNS
-import rnsh.exception as exception
-import rnsh.process as process
-import rnsh.retry as retry
-import rnsh.rnslogging as rnslogging
-import rnsh.session as session
+
 import re
-import contextlib
+import os
+import sys
+
+import RNS
+import rnsh.process as process
+import rnsh.session as session
 import rnsh.args
-import pwd
-import rnsh.protocol as protocol
-import rnsh.helpers as helpers
 import rnsh.loop
 import rnsh.listener as listener
 import rnsh.initiator as initiator
 
-module_logger = __logging.getLogger(__name__)
-
-
-def _get_logger(name: str):
-    global module_logger
-    return module_logger.getChild(name)
-
-
 APP_NAME = "rnsh"
 loop: asyncio.AbstractEventLoop | None = None
 
-
-def _sanitize_service_name(service_name:str) -> str:
-    return re.sub(r'\W+', '', service_name)
-
+def _sanitize_service_name(service_name:str) -> str: return re.sub(r'\W+', '', service_name)
 
 def prepare_identity(identity_path, service_name: str = None) -> tuple[RNS.Identity]:
-    log = _get_logger("_prepare_identity")
     service_name = _sanitize_service_name(service_name or "")
     if identity_path is None:
         identity_path = RNS.Reticulum.identitypath + "/" + APP_NAME + \
@@ -83,9 +55,10 @@ def prepare_identity(identity_path, service_name: str = None) -> tuple[RNS.Ident
         identity = RNS.Identity.from_file(identity_path)
 
     if identity is None:
-        log.info("No valid saved identity found, creating new...")
+        RNS.log("No valid saved identity found, creating new...", RNS.LOG_INFO)
         identity = RNS.Identity()
         identity.to_file(identity_path)
+    
     return identity
 
 
@@ -98,17 +71,13 @@ def print_identity(configdir, identitypath, service_name, include_destination: b
     print("Identity     : " + str(identity))
     if include_destination:
         print("Listening on : " + RNS.prettyhexrep(destination.hash))
-    exit(0)
 
+    exit(0)
 
 verbose_set = False
 
-
 async def _rnsh_cli_main():
     global verbose_set
-    log = _get_logger("main")
-    _loop = asyncio.get_running_loop()
-    rnslogging.set_main_loop(_loop)
     args = rnsh.args.Args(sys.argv)
     verbose_set = args.verbose > 0
 
@@ -156,24 +125,20 @@ async def _rnsh_cli_main():
         return 1
 
 
-def rnsh_cli():
+def main():
     global verbose_set
     return_code = 1
     exc = None
-    try:
-        return_code = asyncio.run(_rnsh_cli_main())
-    except SystemExit:
-        pass
-    except KeyboardInterrupt:
-        pass
+    try: return_code = asyncio.run(_rnsh_cli_main())
+    except SystemExit: pass
+    except KeyboardInterrupt: pass
     except Exception as ex:
         print(f"Unhandled exception: {ex}")
         exc = ex
+    
     process.tty_unset_reader_callbacks(0)
-    if verbose_set and exc:
-        raise exc
+    if verbose_set and exc: raise exc
     sys.exit(return_code if return_code is not None else 255)
 
 
-if __name__ == "__main__":
-    rnsh_cli()
+if __name__ == "__main__": main()

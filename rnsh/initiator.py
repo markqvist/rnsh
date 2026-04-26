@@ -28,7 +28,6 @@ import asyncio
 import base64
 import enum
 import functools
-import logging as __logging
 import os
 import queue
 import shlex
@@ -43,7 +42,6 @@ import RNS
 import rnsh.exception as exception
 import rnsh.process as process
 import rnsh.retry as retry
-import rnsh.rnslogging as rnslogging
 import rnsh.session as session
 import re
 import contextlib
@@ -53,14 +51,6 @@ import bz2
 import rnsh.protocol as protocol
 import rnsh.helpers as helpers
 import rnsh.rnsh
-
-module_logger = __logging.getLogger(__name__)
-
-
-def _get_logger(name: str):
-    global module_logger
-    return module_logger.getChild(name)
-
 
 _identity = None
 _reticulum = None
@@ -75,22 +65,16 @@ _loop: asyncio.AbstractEventLoop | None = None
 async def _check_finished(timeout: float = 0):
     return _finished is not None and await process.event_wait(_finished, timeout=timeout)
 
-
 def _sigint_handler(sig, loop):
     global _finished
-    log = _get_logger("_sigint_handler")
-    log.debug(signal.Signals(sig).name)
-    if _finished is not None:
-        _finished.set()
-    else:
-        raise KeyboardInterrupt()
-
+    RNS.log(f"{signal.Signals(sig).name}", RNS.LOG_DEBUG)
+    if _finished is not None: _finished.set()
+    else: raise KeyboardInterrupt()
 
 async def _spin_tty(until=None, msg=None, timeout=None):
     i = 0
     syms = "⢄⢂⢁⡁⡈⡐⡠"
-    if timeout != None:
-        timeout = time.time()+timeout
+    if timeout != None: timeout = time.time()+timeout
 
     print(msg+"  ", end=" ")
     while (timeout == None or time.time()<timeout) and not until():
@@ -101,31 +85,22 @@ async def _spin_tty(until=None, msg=None, timeout=None):
 
     print("\r"+" "*len(msg)+"  \r", end="")
 
-    if timeout != None and time.time() > timeout:
-        return False
-    else:
-        return True
+    if timeout != None and time.time() > timeout: return False
+    else:                                         return True
 
 
 async def _spin_pipe(until: callable = None, msg=None, timeout: float | None = None) -> bool:
-    if timeout is not None:
-        timeout += time.time()
+    if timeout is not None: timeout += time.time()
 
     while (timeout is None or time.time() < timeout) and not until():
-        if await _check_finished(0.1):
-            raise asyncio.CancelledError()
-    if timeout is not None and time.time() > timeout:
-        return False
-    else:
-        return True
-
+        if await _check_finished(0.1): raise asyncio.CancelledError()
+    
+    if timeout is not None and time.time() > timeout: return False
+    else: return True
 
 async def _spin(until: callable = None, msg=None, timeout: float | None = None, quiet: bool = False) -> bool:
-    if not quiet and os.isatty(1):
-        return await _spin_tty(until, msg, timeout)
-    else:
-        return await _spin_pipe(until, msg, timeout)
-
+    if not quiet and os.isatty(1): return await _spin_tty(until, msg, timeout)
+    else:                          return await _spin_pipe(until, msg, timeout)
 
 _link: RNS.Link | None = None
 _remote_exec_grace = 2.0
@@ -140,27 +115,28 @@ class InitiatorState(enum.IntEnum):
     IS_TERMINATE  = 4
     IS_TEARDOWN   = 5
 
-
 def _client_link_closed(link):
-    log = _get_logger("_client_link_closed")
-    if _finished:
-        _finished.set()
+    if _finished: _finished.set()
 
+def _client_message_handler(message: RNS.MessageBase): _pq.put(message)
 
-def _client_message_handler(message: RNS.MessageBase):
-    log = _get_logger("_client_message_handler")
-    _pq.put(message)
+def compute_target_rns_loglevel(verbosity: int, quietness: int, base_level: int = RNS.LOG_INFO) -> int:
+    try:
+        target = int(base_level) + int(verbosity) - int(quietness)
+        if target < RNS.LOG_CRITICAL: target = RNS.LOG_CRITICAL
+        if target > RNS.LOG_DEBUG:    target = RNS.LOG_DEBUG
+        return target
+    
+    except Exception: return base_level
 
 
 class RemoteExecutionError(Exception):
-    def __init__(self, msg):
-        self.msg = msg
+    def __init__(self, msg): self.msg = msg
 
 
 async def _initiate_link(configdir, identitypath=None, verbosity=0, quietness=0, noid=False, destination=None,
                          timeout=RNS.Transport.PATH_REQUEST_TIMEOUT):
     global _identity, _reticulum, _link, _destination, _remote_exec_grace
-    log = _get_logger("_initiate_link")
 
     dest_len = (RNS.Reticulum.TRUNCATED_HASHLENGTH // 8) * 2
     if len(destination) != dest_len:
@@ -173,16 +149,16 @@ async def _initiate_link(configdir, identitypath=None, verbosity=0, quietness=0,
         raise RemoteExecutionError("Invalid destination entered. Check your input.")
 
     if _reticulum is None:
-        targetloglevel = rnslogging.compute_target_rns_loglevel(verbosity, quietness, RNS.LOG_ERROR)
-        _reticulum = RNS.Reticulum(configdir=configdir, loglevel=targetloglevel)
-        rnslogging.RnsHandler.set_log_level_with_rns_level(targetloglevel)
+        targetloglevel = compute_target_rns_loglevel(verbosity, quietness, RNS.LOG_ERROR)
+        # TODO: Add .rnsh/logfile output destination
+        _reticulum = RNS.Reticulum(configdir=configdir, loglevel=targetloglevel, logdest=RNS.LOG_FILE)
 
     if _identity is None:
         _identity = rnsh.rnsh.prepare_identity(identitypath)
 
     if not RNS.Transport.has_path(destination_hash):
         RNS.Transport.request_path(destination_hash)
-        log.info(f"Requesting path...")
+        RNS.log(f"Requesting path...", RNS.LOG_INFO)
         if not await _spin(until=lambda: RNS.Transport.has_path(destination_hash), msg="Requesting path...",
                            timeout=timeout, quiet=quietness > 0):
             raise RemoteExecutionError("Path not found")
@@ -197,18 +173,18 @@ async def _initiate_link(configdir, identitypath=None, verbosity=0, quietness=0,
         )
 
     if _link is None or _link.status == RNS.Link.PENDING:
-        log.debug("No link")
+        RNS.log("No link", RNS.LOG_DEBUG)
         _link = RNS.Link(_destination)
         _link.did_identify = False
 
         _link.set_link_closed_callback(_client_link_closed)
 
-    log.info(f"Establishing link...")
+    RNS.log(f"Establishing link...", RNS.LOG_VERBOSE)
     if not await _spin(until=lambda: _link.status == RNS.Link.ACTIVE, msg="Establishing link...",
                        timeout=timeout, quiet=quietness > 0):
         raise RemoteExecutionError("Could not establish link with " + RNS.prettyhexrep(destination_hash))
 
-    log.debug("Have link")
+    RNS.log("Have link", RNS.LOG_DEBUG)
     if not noid and not _link.did_identify:
         # Delay a tiny bit to allow listener to fully enter WAIT_IDENT state
         await asyncio.sleep(min(1, _link.rtt * 1.1 + 0.05))
@@ -228,7 +204,6 @@ async def _handle_error(errmsg: RNS.MessageBase):
 async def initiate(configdir: str, identitypath: str, verbosity: int, quietness: int, noid: bool, destination: str,
                    timeout: float, command: [str] | None = None):
     global _finished, _link
-    log = _get_logger("_initiate")
     with process.TTYRestorer(sys.stdin.fileno()) as ttyRestorer:
         loop = asyncio.get_running_loop()
         state = InitiatorState.IS_INITIAL
@@ -265,7 +240,7 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
             await _handle_error(vm)
             if not isinstance(vm, protocol.VersionInfoMessage):
                 raise Exception("Invalid message received")
-            log.debug(f"Server version info: sw {vm.sw_version} prot {vm.protocol_version}")
+            RNS.log(f"Server version info: sw {vm.sw_version} prot {vm.protocol_version}", RNS.LOG_DEBUG)
             state = InitiatorState.IS_RUNNING
         except queue.Empty:
             print("Protocol error")
@@ -274,7 +249,6 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
         winch = False
         def sigwinch_handler():
             nonlocal winch
-            # log.debug("WindowChanged")
             winch = True
 
         esc = False
@@ -413,7 +387,7 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
                         if message.stream_id == protocol.StreamDataMessage.STREAM_ID_STDOUT:
                             if message.data and len(message.data) > 0:
                                 ttyRestorer.raw()
-                                log.debug(f"stdout: {message.data}")
+                                RNS.log(f"stdout: {message.data}", RNS.LOG_DEBUG)
                                 os.write(1, message.data)
                                 sys.stdout.flush()
                             if message.eof:
@@ -421,16 +395,16 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
                         if message.stream_id == protocol.StreamDataMessage.STREAM_ID_STDERR:
                             if message.data and len(message.data) > 0:
                                 ttyRestorer.raw()
-                                log.debug(f"stdout: {message.data}")
+                                RNS.log(f"stdout: {message.data}", RNS.LOG_DEBUG)
                                 os.write(2, message.data)
                                 sys.stderr.flush()
                             if message.eof:
                                 os.close(2)
                     elif isinstance(message, protocol.CommandExitedMessage):
-                        log.debug(f"received return code {message.return_code}, exiting")
+                        RNS.log(f"received return code {message.return_code}, exiting", RNS.LOG_DEBUG)
                         return message.return_code
                     elif isinstance(message, protocol.ErrorMessage):
-                        log.error(message.data)
+                        RNS.log(f"Remote error: {message.data}", RNS.LOG_ERROR)
                         if message.fatal:
                             _link.teardown()
                             return 200
@@ -499,5 +473,5 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
 
             # await process.event_wait_any([_new_data, _finished], timeout=min(max(rtt * 50, 5), 120))
             # await sleeper.sleep_async()
-        log.debug("after main loop")
+        RNS.log("Main loop done", RNS.LOG_DEBUG)
         return 0

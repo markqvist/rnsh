@@ -1,12 +1,9 @@
 import asyncio
 import time
 
-
 def bitwise_or_if(value: int, condition: bool, orval: int):
-    if not condition:
-        return value
+    if not condition: return value
     return value | orval
-
 
 def check_and(value: int, andval: int) -> bool:
     return (value & andval) > 0
@@ -23,10 +20,6 @@ class SleepRate:
         sleep_for = next_wake - self.last_wake
         return sleep_for if sleep_for > 0 else 0
 
-    async def sleep_async(self):
-        await asyncio.sleep(self.next_sleep_time())
+    async def sleep_async(self): await asyncio.sleep(self.next_sleep_time())
 
-    def sleep_block(self):
-        time.sleep(self.next_sleep_time())
-
-
+    def sleep_block(self): time.sleep(self.next_sleep_time())
