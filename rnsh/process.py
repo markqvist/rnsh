@@ -573,66 +573,86 @@ class CallbackSubprocess:
         Write bytes to the stdin of the child process.
         :param data: bytes to write
         """
-        # Map CTRL-C to an actual SIGINT to ensure expected behavior across platforms
-        if data == CTRL_C and self.running:
-            with exception.permit(SystemExit):
-                # Send to the child's process group for TTY semantics
-                with contextlib.suppress(Exception):
-                    os.killpg(self._pid, signal.SIGINT)
-                os.kill(self._pid, signal.SIGINT)
 
-            #####################################################################
-            # It seems this was added to ensure some kind of test compatibility,
-            # but in reality it completely breaks Ctrl-C handling in interactive
-            # shell sessions, since it ensures that the underlying process is
-            # always terminated, leading to the session ending as well. Disabled
-            # but left here for reference.
-            #
-            # Aggressively ensure quick termination expected by tests
-            # def _escalate():
-            #     if self.running:
-            #         with exception.permit(SystemExit):
-            #             with contextlib.suppress(Exception):
-            #                 os.killpg(self._pid, signal.SIGHUP)
-            #             os.kill(self._pid, signal.SIGTERM)
-            # if not self._loop.is_closed():
-            #     self._loop.call_later(0.05, _escalate)
-            #
-            #####################################################################
+        #####################################################################
+        # It seems this was added to ensure some kind of test compatibility,
+        # but in reality it completely breaks Ctrl-C handling in interactive
+        # shell sessions, since it ensures that the underlying process is
+        # always terminated, leading to the session ending as well. Disabled
+        # but left here for reference.
+        #
+        # # Map CTRL-C to an actual SIGINT to ensure expected behavior across platforms
+        # if data == CTRL_C and self.running:
+        #     with exception.permit(SystemExit):
+        #         # Send to the child's process group for TTY semantics
+        #         with contextlib.suppress(Exception):
+        #             os.killpg(self._pid, signal.SIGINT)
+        #         os.kill(self._pid, signal.SIGINT)
+        #
+        #   
+        #     Aggressively ensure quick termination expected by tests
+        #     def _escalate():
+        #         if self.running:
+        #             with exception.permit(SystemExit):
+        #                 with contextlib.suppress(Exception):
+        #                     os.killpg(self._pid, signal.SIGHUP)
+        #                 os.kill(self._pid, signal.SIGTERM)
+        #     if not self._loop.is_closed():
+        #         self._loop.call_later(0.05, _escalate)
+        #####################################################################
+        
+        #####################################################################
+        # This was added in the same round, and I cannot for the life of me
+        # figure out what it is supposed to be good for, other than making a
+        # test runner happy. Disabling for now as well.
+        #
+        # # When stdin is a TTY and stdout is a pipe, simulate canonical delivery of the buffered line upon CTRL-D
+        # if (not self._stdin_is_pipe) and self._stdout_is_pipe:
+        #     for b in data:
+        #         if b == CTRL_D[0]:
+        #             if len(self._tty_line_buffer) > 0 and self._stdout_cb is not None:
+        #                 try:
+        #                     self._stdout_cb(bytes(self._tty_line_buffer))
+        #                 finally:
+        #                     self._tty_line_buffer.clear()
+        #         elif b not in (CTRL_C[0],):
+        #             self._tty_line_buffer.append(b)
 
-        # When stdin is a TTY and stdout is a pipe, simulate canonical delivery of the buffered line upon CTRL-D
-        if (not self._stdin_is_pipe) and self._stdout_is_pipe:
-            for b in data:
-                if b == CTRL_D[0]:
-                    if len(self._tty_line_buffer) > 0 and self._stdout_cb is not None:
-                        try:
-                            self._stdout_cb(bytes(self._tty_line_buffer))
-                        finally:
-                            self._tty_line_buffer.clear()
-                elif b not in (CTRL_C[0],):
-                    self._tty_line_buffer.append(b)
-        # When stdin is a pipe and stdout is a pipe, forward input immediately for visibility
-        if self._stdin_is_pipe and self._stdout_is_pipe and self._stdout_cb is not None and data not in (CTRL_C, CTRL_D):
-            try:
-                self._stdout_cb(data)
-            except Exception:
-                pass
+        # # When stdin is a pipe and stdout is a pipe, forward input immediately for visibility
+        # if self._stdin_is_pipe and self._stdout_is_pipe and self._stdout_cb is not None and data not in (CTRL_C, CTRL_D):
+        #     try:
+        #         self._stdout_cb(data)
+        #     except Exception:
+        #         pass
+
+        #  Again, this is not correct. That will kill the entire session just from a Ctrl-D.
+        #
         # If CTRL-D is written to a PTY-backed stdin with TTY-backed stdout, emulate EOF by sending SIGHUP
         # so that simple programs like /bin/cat will terminate promptly.
-        if data == CTRL_D and not self._stdin_is_pipe and not self._stdout_is_pipe and self.running:
-            with exception.permit(SystemExit):
-                with contextlib.suppress(Exception):
-                    os.killpg(self._pid, signal.SIGHUP)
-                os.kill(self._pid, signal.SIGHUP)
+        # if data == CTRL_D and not self._stdin_is_pipe and not self._stdout_is_pipe and self.running:
+        #     with exception.permit(SystemExit):
+        #         with contextlib.suppress(Exception):
+        #             os.killpg(self._pid, signal.SIGHUP)
+        #         os.kill(self._pid, signal.SIGHUP)
+        #
+        #######################################################################
+        
+        # This seems very strange as well, disabling for now
+        #
         # In fully-PTY mode, ensure a second line appears promptly after a newline to match test expectations
-        if (not self._stdin_is_pipe and not self._stdout_is_pipe and not self._stderr_is_pipe) and (b"\n" in data):
-            try:
-                echoed = data.replace(b"\n", b"\r\n")
-                if len(echoed) > 0 and self._stdout_cb is not None:
-                    self._stdout_cb(echoed)
-            except Exception:
-                pass
+        # if (not self._stdin_is_pipe and not self._stdout_is_pipe and not self._stderr_is_pipe) and (b"\n" in data):
+        #     try:
+        #         echoed = data.replace(b"\n", b"\r\n")
+        #         if len(echoed) > 0 and self._stdout_cb is not None:
+        #             self._stdout_cb(echoed)
+        #     except Exception:
+        #         pass
+        #######################################################################
+
         os.write(self._child_stdin, data)
+
+        # TODO: Check what this is actually supposed to solve.
+        #
         # For pipe-in + TTY-out, echo should be visible immediately
         if self._stdin_is_pipe and not self._stdout_is_pipe and self._stdout_cb is not None and data not in (CTRL_C, CTRL_D):
             try:
