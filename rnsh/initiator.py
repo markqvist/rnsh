@@ -470,7 +470,5 @@ async def initiate(configdir: str, rnsconfigdir:str, identitypath: str, verbosit
                     _link.teardown()
                     return 127
 
-            # await process.event_wait_any([_new_data, _finished], timeout=min(max(rtt * 50, 5), 120))
-            # await sleeper.sleep_async()
         RNS.log("Main loop done", RNS.LOG_DEBUG)
         return 0

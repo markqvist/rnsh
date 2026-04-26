@@ -1,4 +1,7 @@
 # `r n s h`  Shell over Reticulum 
+
+***Please Note:** This fork of `rnsh` was maintained until RNS version 1.2.0. It has now been merged into [RNS](https://github.com/markqvist/reticulum), and this repository will not receive further updates. Thanks to @acehoss for the original, pioneering work of creating a full interactive shell solution for Reticulum!*
+
 [![CI](https://github.com/acehoss/rnsh/actions/workflows/python-package.yml/badge.svg)](https://github.com/acehoss/rnsh/actions/workflows/python-package.yml) 
 [![Release](https://github.com/acehoss/rnsh/actions/workflows/python-publish.yml/badge.svg)](https://github.com/acehoss/rnsh/actions/workflows/python-publish.yml) 
 [![PyPI version](https://badge.fury.io/py/rnsh.svg)](https://badge.fury.io/py/rnsh)  
