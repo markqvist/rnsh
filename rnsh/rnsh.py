@@ -76,10 +76,25 @@ def print_identity(configdir, identitypath, service_name, include_destination: b
 
 verbose_set = False
 
+def ensure_config_directory():
+    if os.path.isdir(os.path.expanduser("~/.config/rnsh")): return os.path.expanduser("~/.config/rnsh")
+    elif os.path.isdir(os.path.expanduser("~/.rnsh")): return os.path.expanduser("~/.rnsh")
+    else:
+        try:
+            os.makedirs(os.path.expanduser("~/.rnsh"))
+            return os.path.expanduser("~/.rnsh")
+
+        except Exception as e:
+            RNS.log(f"Could not get or create rnsh configuration directory, aborting", RNS.LOG_CRITICAL)
+            os._exit(1)
+
+
 async def _rnsh_cli_main():
     global verbose_set
     args = rnsh.args.Args(sys.argv)
     verbose_set = args.verbose > 0
+
+    configdir = ensure_config_directory()
 
     if args.print_identity:
         print_identity(args.config, args.identity, args.service_name, args.listen)
@@ -93,7 +108,8 @@ async def _rnsh_cli_main():
         elif os.path.isfile(os.path.expanduser("~/.rnsh/allowed_identities")):
             allowed_file = os.path.expanduser("~/.rnsh/allowed_identities")
 
-        await listener.listen(configdir=args.config,
+        await listener.listen(configdir=configdir,
+                              rnsconfigdir=args.config,
                               command=args.command_line,
                               identitypath=args.identity,
                               service_name=args.service_name,
@@ -108,7 +124,8 @@ async def _rnsh_cli_main():
         return 0
 
     if args.destination is not None:
-        return_code = await initiator.initiate(configdir=args.config,
+        return_code = await initiator.initiate(configdir=configdir,
+                                               rnsconfigdir=args.config,
                                                identitypath=args.identity,
                                                verbosity=args.verbose,
                                                quietness=args.quiet,

@@ -108,7 +108,7 @@ def compute_target_rns_loglevel(verbosity: int, quietness: int, base_level: int 
     
     except Exception: return base_level
 
-async def listen(configdir, command, identitypath=None, service_name=None, verbosity=0, quietness=0, allowed=None,
+async def listen(configdir, rnsconfigdir, command, identitypath=None, service_name=None, verbosity=0, quietness=0, allowed=None,
                  allowed_file=None, disable_auth=None, announce_period=900, no_remote_command=True, remote_cmd_as_args=False,
                  loop: asyncio.AbstractEventLoop = None):
     global _identity, _allow_all, _allowed_identity_hashes, _allowed_file, _allowed_file_identity_hashes
@@ -122,7 +122,7 @@ async def listen(configdir, command, identitypath=None, service_name=None, verbo
 
     # More -v should increase verbosity (higher RNS.loglevel); -q should decrease it
     targetloglevel = compute_target_rns_loglevel(verbosity, quietness, RNS.LOG_INFO)
-    _reticulum = RNS.Reticulum(configdir=configdir, loglevel=targetloglevel)
+    _reticulum = RNS.Reticulum(configdir=rnsconfigdir, loglevel=targetloglevel)
     _identity = rnsh.rnsh.prepare_identity(identitypath, service_name)
     _destination = RNS.Destination(_identity, RNS.Destination.IN, RNS.Destination.SINGLE, rnsh.rnsh.APP_NAME)
     

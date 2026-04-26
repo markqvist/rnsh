@@ -134,7 +134,7 @@ class RemoteExecutionError(Exception):
     def __init__(self, msg): self.msg = msg
 
 
-async def _initiate_link(configdir, identitypath=None, verbosity=0, quietness=0, noid=False, destination=None,
+async def _initiate_link(configdir, rnsconfigdir, identitypath=None, verbosity=0, quietness=0, noid=False, destination=None,
                          timeout=RNS.Transport.PATH_REQUEST_TIMEOUT):
     global _identity, _reticulum, _link, _destination, _remote_exec_grace
 
@@ -150,8 +150,8 @@ async def _initiate_link(configdir, identitypath=None, verbosity=0, quietness=0,
 
     if _reticulum is None:
         targetloglevel = compute_target_rns_loglevel(verbosity, quietness, RNS.LOG_ERROR)
-        # TODO: Add .rnsh/logfile output destination
-        _reticulum = RNS.Reticulum(configdir=configdir, loglevel=targetloglevel, logdest=RNS.LOG_FILE)
+        RNS.logfile = os.path.join(configdir, "logfile")
+        _reticulum = RNS.Reticulum(configdir=rnsconfigdir, loglevel=targetloglevel, logdest=RNS.LOG_FILE)
 
     if _identity is None:
         _identity = rnsh.rnsh.prepare_identity(identitypath)
@@ -201,7 +201,7 @@ async def _handle_error(errmsg: RNS.MessageBase):
         raise RemoteExecutionError(f"Remote error: {errmsg.msg}")
 
 
-async def initiate(configdir: str, identitypath: str, verbosity: int, quietness: int, noid: bool, destination: str,
+async def initiate(configdir: str, rnsconfigdir:str, identitypath: str, verbosity: int, quietness: int, noid: bool, destination: str,
                    timeout: float, command: [str] | None = None):
     global _finished, _link
     with process.TTYRestorer(sys.stdin.fileno()) as ttyRestorer:
@@ -210,15 +210,14 @@ async def initiate(configdir: str, identitypath: str, verbosity: int, quietness:
         data_buffer = bytearray(sys.stdin.buffer.read()) if not os.isatty(sys.stdin.fileno()) else bytearray()
         line_buffer = bytearray()
 
-        await _initiate_link(
-            configdir=configdir,
-            identitypath=identitypath,
-            verbosity=verbosity,
-            quietness=quietness,
-            noid=noid,
-            destination=destination,
-            timeout=timeout
-        )
+        await _initiate_link(configdir=configdir,
+                             rnsconfigdir=rnsconfigdir,
+                             identitypath=identitypath,
+                             verbosity=verbosity,
+                             quietness=quietness,
+                             noid=noid,
+                             destination=destination,
+                             timeout=timeout)
 
         if not _link or _link.status not in [RNS.Link.ACTIVE, RNS.Link.PENDING]:
             return 255
